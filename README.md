@@ -1,4 +1,4 @@
-# Education-ArborEvents
+# Arbor Events
 
 This repository contains a set of code to interact with the Arbor Education API to facilitate room booking and event management.
 
