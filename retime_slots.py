@@ -81,17 +81,34 @@ def is_active_on(record, on_date):
 
 
 def list_registration_units(arbor):
-    """List the academic units linked to a registration form, as (unit, registration form name) pairs."""
+    """List the academic units linked to a current registration form, as (unit, registration form name) pairs."""
+    today = date.today()
     forms = arbor.list_registration_forms()
     print(f"Found {len(forms)} registration forms")
+    year_ends = {}
     units = {}
-    for form in forms:
+    for count, form in enumerate(forms, start=1):
         form = arbor.get_full_record(form, "registrationForm", "registrationFormName")
+        name = form.get("registrationFormName")
+
+        # Skip forms from academic years that have finished
+        year_href = (form.get("academicYear") or {}).get("href")
+        if year_href and year_href not in year_ends:
+            year_ends[year_href] = to_date(arbor._get_href(year_href)["academicYear"].get("endDate"))
+        if year_href and year_ends[year_href] is not None and year_ends[year_href] < today:
+            print(f"  {count}/{len(forms)} {name}: past academic year, skipped")
+            continue
+
+        found = 0
         for unit in arbor.list_academic_units(form["href"]):
             unit = arbor.get_full_record(unit, "academicUnit", "academicUnitName")
-            # Check the link ourselves in case the server ignored the filter
-            if (unit.get("registrationForm") or {}).get("href") == form["href"]:
-                units[unit["href"]] = (unit, form.get("registrationFormName"))
+            # Stop rather than read every class in the school if the server ignored the filter
+            if (unit.get("registrationForm") or {}).get("href") != form["href"]:
+                raise RuntimeError("Arbor returned classes not linked to the registration form, so the "
+                                   "registrationForm filter isn't supported. Stopping before reading every class.")
+            units[unit["href"]] = (unit, name)
+            found += 1
+        print(f"  {count}/{len(forms)} {name}: {found} registration class(es)")
     return list(units.values())
 
 

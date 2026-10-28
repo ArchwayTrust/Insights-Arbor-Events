@@ -50,6 +50,7 @@ class ArborEvents:
         self.rest_url = f"{base_url}/rest-v2"  # Base URL for REST endpoints
         self.graphql_url = f"{base_url}/graphql/query"  # GraphQL endpoint
         self.auth = (username, password)
+        self.timeout = 120  # Seconds to wait for a response before giving up
 
     def _post_request(self, url, payload):
         response = requests.post(url, json=payload, auth=self.auth)
@@ -59,14 +60,14 @@ class ArborEvents:
             raise RuntimeError(f"Request failed. status_code: {response.status_code}, text: {response.text}")
 
     def _get_request(self, url, params=None):
-        response = requests.get(url, params=params, auth=self.auth)
+        response = requests.get(url, params=params, auth=self.auth, timeout=self.timeout)
         if response.status_code == 200:
             return response.json()
         else:
             raise RuntimeError(f"Request failed. status_code: {response.status_code}, text: {response.text}")
 
     def _put_request(self, url, payload):
-        response = requests.put(url, json=payload, auth=self.auth)
+        response = requests.put(url, json=payload, auth=self.auth, timeout=self.timeout)
         if response.status_code == 200:
             return response.json()
         else:
