@@ -13,6 +13,7 @@
 #
 # 1. Export the current slots to a CSV:
 #        python retime_slots.py export [--object-type RepeatingSchoolEvent] [--event-type MEETING]
+#        python retime_slots.py export --object-type AcademicUnit --registration-only
 # 2. Fill in Effective Date, New Start Time and New End Time for the slots to move.
 #    Rows left blank are ignored.
 # 3. Check what will happen, then apply:
@@ -41,7 +42,7 @@ OBJECT_TYPES = {
 }
 
 EXPORT_COLUMNS = [
-    "Object Type", "Timetabled Object Href", "Name", "Event Type", "Timetable Slot ID", "Day Of Week", "Day Of Cycle",
+    "Object Type", "Timetabled Object Href", "Name", "Event Type", "Registration Form", "Timetable Slot ID", "Day Of Week", "Day Of Cycle",
     "Term Time Only", "Start Time", "End Time", "Slot Effective Date", "Slot End Date",
     "Effective Date", "New Start Time", "New End Time",
 ]
@@ -79,20 +80,39 @@ def is_active_on(record, on_date):
     return (start is None or start <= on_date) and (end is None or end >= on_date)
 
 
-def export_slots(arbor, csv_path, object_types, event_type_code=None):
+def list_registration_units(arbor):
+    """List the academic units linked to a registration form, as (unit, registration form name) pairs."""
+    forms = arbor.list_registration_forms()
+    print(f"Found {len(forms)} registration forms")
+    units = {}
+    for form in forms:
+        form = arbor.get_full_record(form, "registrationForm", "registrationFormName")
+        for unit in arbor.list_academic_units(form["href"]):
+            unit = arbor.get_full_record(unit, "academicUnit", "academicUnitName")
+            # Check the link ourselves in case the server ignored the filter
+            if (unit.get("registrationForm") or {}).get("href") == form["href"]:
+                units[unit["href"]] = (unit, form.get("registrationFormName"))
+    return list(units.values())
+
+
+def export_slots(arbor, csv_path, object_types, event_type_code=None, registration_only=False):
     """Write every slot that hasn't already ended, for every object of the given types."""
     today = date.today()
     rows = []
     for object_type in object_types:
         list_method, root_key, name_field = OBJECT_TYPES[object_type]
         if object_type == "RepeatingSchoolEvent":
-            objects = arbor.list_repeating_school_events(event_type_code)
+            objects = [(obj, None) for obj in arbor.list_repeating_school_events(event_type_code)]
+        elif object_type == "AcademicUnit" and registration_only:
+            objects = list_registration_units(arbor)
         else:
-            objects = getattr(arbor, list_method)()
+            objects = [(obj, None) for obj in getattr(arbor, list_method)()]
         print(f"Reading slots for {len(objects)} {object_type} records")
 
-        for obj in objects:
-            obj = arbor._get_href(obj["href"])[root_key]
+        for count, (obj, registration_form) in enumerate(objects, start=1):
+            if count % 25 == 0:
+                print(f"  {count}/{len(objects)} {object_type} records read, {len(rows)} slots so far")
+            obj = arbor.get_full_record(obj, root_key, name_field)
             # Skip classes that have already finished, rather than querying their slots
             obj_end = to_date(obj.get("endDate"))
             if obj_end is not None and obj_end < today:
@@ -107,6 +127,7 @@ def export_slots(arbor, csv_path, object_types, event_type_code=None):
                     "Timetabled Object Href": obj["href"],
                     "Name": obj.get(name_field),
                     "Event Type": event_type,
+                    "Registration Form": registration_form,
                     "Timetable Slot ID": slot["id"],
                     "Day Of Week": slot.get("dayOfWeek"),
                     "Day Of Cycle": slot.get("dayOfCycle"),
@@ -237,6 +258,8 @@ if __name__ == "__main__":
     export_parser.add_argument("--object-type", choices=[*OBJECT_TYPES, "all"], default="RepeatingSchoolEvent",
                                help="Which slots to export: repeating events (default), classes, clubs or all")
     export_parser.add_argument("--event-type", help="Only export repeating events of this type code, e.g. MEETING")
+    export_parser.add_argument("--registration-only", action="store_true",
+                               help="Only export classes linked to a registration form (registration groups)")
 
     apply_parser = subparsers.add_parser("apply", help="End slots and create new ones from the filled-in CSV")
     apply_parser.add_argument("--csv", default="timetable_slots.csv")
@@ -249,6 +272,6 @@ if __name__ == "__main__":
     arbor = connect()
     if args.command == "export":
         object_types = list(OBJECT_TYPES) if args.object_type == "all" else [args.object_type]
-        export_slots(arbor, args.csv, object_types, args.event_type)
+        export_slots(arbor, args.csv, object_types, args.event_type, args.registration_only)
     else:
         apply_slots(arbor, args.csv, args.results, args.dry_run, args.allow_all_object_types)

@@ -33,6 +33,7 @@ class ArborEvents:
         create_timetable_slot_staff: Add a staff member to a timetable slot
         list_timetable_slot_student_exceptions: List students excluded from a timetable slot
         create_timetable_slot_student_exception: Exclude a student from a timetable slot
+        list_registration_forms: List registration forms
         list_academic_units: List academic units (classes)
         list_clubs: List clubs"""
     
@@ -100,6 +101,19 @@ class ArborEvents:
     def _get_href(self, href):
         """GET a resource by its href (e.g. "/rest-v2/timetable-slots/12")."""
         return self._get_request(f"{self.base_url}{href}")
+
+    def get_full_record(self, record, root_key, field):
+        """Return a listed record in full, only fetching it if the listing left out field.
+        Args:
+            record (dict): Record from a listing (at least entityType and href)
+            root_key (str): Key holding the record in a GET response (e.g. "timetableSlot")
+            field (str): A field the full record always has (e.g. "startTime")
+        Returns:
+            dict: Full record"""
+
+        if field in record:
+            return record
+        return self._get_href(record["href"])[root_key]
 
     def _delete_request(self, url):
         response = requests.delete(url, auth=self.auth)
@@ -404,7 +418,7 @@ class ArborEvents:
 
         slots = self._list_request("timetable-slots", "timetableSlots",
                                    {"timetabledObject.equals": timetabled_object_href})
-        return [self._get_href(slot["href"])["timetableSlot"] for slot in slots]
+        return [self.get_full_record(slot, "timetableSlot", "startTime") for slot in slots]
 
     def get_timetable_slot(self, slot_id):
         """Get a timetable slot by id
@@ -495,7 +509,7 @@ class ArborEvents:
 
         records = self._list_request("timetable-slot-locations", "timetableSlotLocations",
                                      {"timetableSlot.equals": slot_href})
-        return [self._get_href(record["href"])["timetableSlotLocation"] for record in records]
+        return [self.get_full_record(record, "timetableSlotLocation", "effectiveDate") for record in records]
 
     def create_timetable_slot_location(self, slot_href, location, effective_date, end_date=None):
         """Add a location to a timetable slot
@@ -531,7 +545,7 @@ class ArborEvents:
 
         records = self._list_request("timetable-slot-staffs", "timetableSlotStaffs",
                                      {"timetableSlot.equals": slot_href})
-        return [self._get_href(record["href"])["timetableSlotStaff"] for record in records]
+        return [self.get_full_record(record, "timetableSlotStaff", "effectiveDate") for record in records]
 
     def create_timetable_slot_staff(self, slot_href, staff, effective_date, end_date=None):
         """Add a staff member to a timetable slot
@@ -567,7 +581,7 @@ class ArborEvents:
 
         records = self._list_request("timetable-slot-student-exceptions", "timetableSlotStudentExceptions",
                                      {"timetableSlot.equals": slot_href})
-        return [self._get_href(record["href"])["timetableSlotStudentException"] for record in records]
+        return [self.get_full_record(record, "timetableSlotStudentException", "effectiveDate") for record in records]
 
     def create_timetable_slot_student_exception(self, slot_href, student, effective_date, end_date=None):
         """Exclude a student from a timetable slot
@@ -594,12 +608,24 @@ class ArborEvents:
         data = self._post_request(api_url, payload)
         return data["timetableSlotStudentException"]["href"]
 
-    def list_academic_units(self):
+    def list_registration_forms(self):
+        """List registration forms
+        Returns:
+            list: Registration form dicts (entityType, href, ...)"""
+
+        return self._list_request("registration-forms", "registrationForms")
+
+    def list_academic_units(self, registration_form_href=None):
         """List academic units (classes and teaching groups)
+        Args:
+            registration_form_href (str): Only return units linked to this registration form
         Returns:
             list: Academic unit dicts (entityType, href, ...)"""
 
-        return self._list_request("academic-units", "academicUnits")
+        filters = {}
+        if registration_form_href:
+            filters["registrationForm.equals"] = registration_form_href
+        return self._list_request("academic-units", "academicUnits", filters)
 
     def list_clubs(self):
         """List clubs

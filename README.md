@@ -36,7 +36,9 @@ The main.py demonstrates how to use the class by looping through a CSV containin
 - list_timetable_slot_locations / create_timetable_slot_location: Rooms attached to a timetable slot.
 - list_timetable_slot_staff / create_timetable_slot_staff: Staff attached to a timetable slot.
 - list_timetable_slot_student_exceptions / create_timetable_slot_student_exception: Students excluded from a timetable slot.
-- list_academic_units() / list_clubs(): Classes and clubs, which are also scheduled by timetable slots.
+- list_registration_forms(): Registration forms (tutor groups).
+- list_academic_units(registration_form_href=None) / list_clubs(): Classes and clubs, which are also scheduled by
+  timetable slots. Pass a registration form href to get just that form's registration classes.
 
 ## Changing times of timetable slots from a date
 Repeating school events, classes (academic units) and clubs are scheduled by timetable slots (one per day of the
@@ -48,6 +50,7 @@ rooms, staff and student exceptions across. Slots that haven't started yet have 
 python retime_slots.py export                          # repeating school events, all event types
 python retime_slots.py export --event-type MEETING     # only one event type
 python retime_slots.py export --object-type AcademicUnit   # classes; also Club or all
+python retime_slots.py export --object-type AcademicUnit --registration-only   # registration groups only
 # fill in Effective Date, New Start Time, New End Time for the slots to move (blank rows are ignored)
 python retime_slots.py apply --dry-run                 # check timetable_slots_results.csv
 python retime_slots.py apply
