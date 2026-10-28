@@ -7,7 +7,7 @@ This repository contains a set of code to interact with the Arbor Education API 
 To use this project, you need to install the required dependencies. You can install them using pip:
 
 ```sh
-pip install azure-identity azure-keyvault-secrets polars request
+pip install azure-identity azure-keyvault-secrets polars requests
 ```
 ## Configuration
 1. Azure Key Vault: This project uses Azure Key Vault to securely store and retrieve secrets. Make sure you have an Azure Key Vault set up and the necessary secrets stored.
@@ -28,3 +28,26 @@ The main.py demonstrates how to use the class by looping through a CSV containin
 - delete_school_event(event_id): Delete a school event.
 - create_school_event(start_datetime, end_datetime, event_type_href, location_href, event_name, narrative): Create a school event.
 - add_event_participant(event_id, participant_id, participant_type="Staff"): Add a participant to an event.
+- list_repeating_school_events(event_type_code=None): List repeating school events, optionally by event type.
+- list_timetable_slots(timetabled_object_href): List the timetable slots that schedule a repeating school event.
+- get_timetable_slot(slot_id) / update_timetable_slot(slot_id, **fields): Read or change a timetable slot.
+- end_timetable_slot(slot_id, end_date): Set a timetable slot's end date.
+- create_timetable_slot(timetabled_object, start_time, end_time, effective_date, ...): Create a timetable slot.
+- list_timetable_slot_locations / create_timetable_slot_location: Rooms attached to a timetable slot.
+- list_timetable_slot_staff / create_timetable_slot_staff: Staff attached to a timetable slot.
+
+## Changing times of repeating events from a date
+Repeating school events are scheduled by timetable slots (one per day of the week or cycle day), each with an
+`effectiveDate`, `endDate`, `startTime` and `endTime`. `retime_slots.py` ends each slot the day before an effective
+date and creates a new slot with the new times from that date, copying the slot's rooms and staff across. Slots
+that haven't started yet have their times changed in place.
+
+```sh
+python retime_slots.py export --event-type MEETING   # writes timetable_slots.csv
+# fill in Effective Date, New Start Time, New End Time for the slots to move (blank rows are ignored)
+python retime_slots.py apply --dry-run               # check timetable_slots_results.csv
+python retime_slots.py apply
+```
+
+Endpoint and field names come from Arbor's public PHP SDK (https://github.com/arbor-education/sis-sdk-php,
+`src/Arbor/Model/TimetableSlot.php`). Test in the sandbox before running against a live school.
