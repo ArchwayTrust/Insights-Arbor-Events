@@ -30,7 +30,11 @@ class ArborEvents:
         list_timetable_slot_locations: List locations for a timetable slot
         create_timetable_slot_location: Add a location to a timetable slot
         list_timetable_slot_staff: List staff for a timetable slot
-        create_timetable_slot_staff: Add a staff member to a timetable slot"""
+        create_timetable_slot_staff: Add a staff member to a timetable slot
+        list_timetable_slot_student_exceptions: List students excluded from a timetable slot
+        create_timetable_slot_student_exception: Exclude a student from a timetable slot
+        list_academic_units: List academic units (classes)
+        list_clubs: List clubs"""
     
     def __init__(self, base_url, username, password):
         """Initialize ArborEvents class
@@ -553,3 +557,53 @@ class ArborEvents:
         }
         data = self._post_request(api_url, payload)
         return data["timetableSlotStaff"]["href"]
+
+    def list_timetable_slot_student_exceptions(self, slot_href):
+        """List students excluded from a timetable slot
+        Args:
+            slot_href (str): Timetable slot href
+        Returns:
+            list: Timetable slot student exception dicts, fetched in full"""
+
+        records = self._list_request("timetable-slot-student-exceptions", "timetableSlotStudentExceptions",
+                                     {"timetableSlot.equals": slot_href})
+        return [self._get_href(record["href"])["timetableSlotStudentException"] for record in records]
+
+    def create_timetable_slot_student_exception(self, slot_href, student, effective_date, end_date=None):
+        """Exclude a student from a timetable slot
+        Args:
+            slot_href (str): Timetable slot href
+            student (dict): {"entityType": "Student", "href": ...}
+            effective_date (str): First date the student is excluded
+            end_date (str): Last date the student is excluded, None for open ended
+        Returns:
+            href (str): Timetable slot student exception href"""
+
+        api_url = f"{self.rest_url}/timetable-slot-student-exceptions"
+        payload = {
+            "request": {
+                "timetableSlotStudentException": {
+                    "entityType": "TimetableSlotStudentException",
+                    "timetableSlot": {"entityType": "TimetableSlot", "href": slot_href},
+                    "student": {"entityType": "Student", "href": student["href"]},
+                    "effectiveDate": effective_date,
+                    "endDate": end_date
+                }
+            }
+        }
+        data = self._post_request(api_url, payload)
+        return data["timetableSlotStudentException"]["href"]
+
+    def list_academic_units(self):
+        """List academic units (classes and teaching groups)
+        Returns:
+            list: Academic unit dicts (entityType, href, ...)"""
+
+        return self._list_request("academic-units", "academicUnits")
+
+    def list_clubs(self):
+        """List clubs
+        Returns:
+            list: Club dicts (entityType, href, ...)"""
+
+        return self._list_request("clubs", "clubs")

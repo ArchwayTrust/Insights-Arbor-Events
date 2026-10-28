@@ -1,19 +1,23 @@
 # pip install azure-identity azure-keyvault-secrets polars requests
 #
-# Move repeating school events to new times from an effective date.
+# Move timetable slots to new times from an effective date.
 #
-# Each repeating school event in Arbor is scheduled by one or more timetable slots
-# (one per day of week / cycle day). Changing times from a date means ending the
-# current slot the day before and creating a new slot with the new times from that
-# date, copying the slot's locations and staff across.
+# Repeating school events, classes (academic units) and clubs in Arbor are scheduled by
+# one or more timetable slots (one per day of week / cycle day). Changing times from a
+# date means ending the current slot the day before and creating a new slot with the new
+# times from that date, copying the slot's locations, staff and student exceptions across.
+#
+# Only repeating school event slots are changed unless --allow-all-object-types is passed.
+# Class slots drive lessons and attendance registers, so check Arbor's timetable guidance
+# before changing them this way.
 #
 # 1. Export the current slots to a CSV:
-#        python retime_slots.py export [--event-type MEETING]
+#        python retime_slots.py export [--object-type RepeatingSchoolEvent] [--event-type MEETING]
 # 2. Fill in Effective Date, New Start Time and New End Time for the slots to move.
 #    Rows left blank are ignored.
 # 3. Check what will happen, then apply:
 #        python retime_slots.py apply --dry-run
-#        python retime_slots.py apply
+#        python retime_slots.py apply [--allow-all-object-types]
 
 import argparse
 from datetime import date, datetime, timedelta
@@ -29,8 +33,15 @@ academy_url = "https://api-sandbox.uk.arbor.sc"
 # Replace with your Key Vault URL
 key_vault_url = "https://altakv01.vault.azure.net/"
 
+# Objects that own timetable slots: listing method, response root key for a single record, name field
+OBJECT_TYPES = {
+    "RepeatingSchoolEvent": ("list_repeating_school_events", "repeatingSchoolEvent", "schoolEventName"),
+    "AcademicUnit": ("list_academic_units", "academicUnit", "academicUnitName"),
+    "Club": ("list_clubs", "club", "name"),
+}
+
 EXPORT_COLUMNS = [
-    "Repeating Event Href", "Event Name", "Event Type", "Timetable Slot ID", "Day Of Week", "Day Of Cycle",
+    "Object Type", "Timetabled Object Href", "Name", "Event Type", "Timetable Slot ID", "Day Of Week", "Day Of Cycle",
     "Term Time Only", "Start Time", "End Time", "Slot Effective Date", "Slot End Date",
     "Effective Date", "New Start Time", "New End Time",
 ]
@@ -68,45 +79,64 @@ def is_active_on(record, on_date):
     return (start is None or start <= on_date) and (end is None or end >= on_date)
 
 
-def export_slots(arbor, csv_path, event_type_code=None):
-    """Write every slot of every repeating school event that hasn't already ended."""
+def export_slots(arbor, csv_path, object_types, event_type_code=None):
+    """Write every slot that hasn't already ended, for every object of the given types."""
     today = date.today()
     rows = []
-    for event in arbor.list_repeating_school_events(event_type_code):
-        event = arbor._get_href(event["href"])["repeatingSchoolEvent"]
-        event_type = (event.get("schoolEventType") or {}).get("href", "").rsplit("/", 1)[-1]
-        for slot in arbor.list_timetable_slots(event["href"]):
-            end = to_date(slot.get("endDate"))
-            if end is not None and end < today:
+    for object_type in object_types:
+        list_method, root_key, name_field = OBJECT_TYPES[object_type]
+        if object_type == "RepeatingSchoolEvent":
+            objects = arbor.list_repeating_school_events(event_type_code)
+        else:
+            objects = getattr(arbor, list_method)()
+        print(f"Reading slots for {len(objects)} {object_type} records")
+
+        for obj in objects:
+            obj = arbor._get_href(obj["href"])[root_key]
+            # Skip classes that have already finished, rather than querying their slots
+            obj_end = to_date(obj.get("endDate"))
+            if obj_end is not None and obj_end < today:
                 continue
-            rows.append({
-                "Repeating Event Href": event["href"],
-                "Event Name": event.get("schoolEventName"),
-                "Event Type": event_type,
-                "Timetable Slot ID": slot["id"],
-                "Day Of Week": slot.get("dayOfWeek"),
-                "Day Of Cycle": slot.get("dayOfCycle"),
-                "Term Time Only": slot.get("termTimeOnly"),
-                "Start Time": slot.get("startTime"),
-                "End Time": slot.get("endTime"),
-                "Slot Effective Date": slot.get("effectiveDate"),
-                "Slot End Date": slot.get("endDate"),
-                "Effective Date": None,
-                "New Start Time": None,
-                "New End Time": None,
-            })
+            event_type = (obj.get("schoolEventType") or {}).get("href", "").rsplit("/", 1)[-1] or None
+            for slot in arbor.list_timetable_slots(obj["href"]):
+                end = to_date(slot.get("endDate"))
+                if end is not None and end < today:
+                    continue
+                rows.append({
+                    "Object Type": object_type,
+                    "Timetabled Object Href": obj["href"],
+                    "Name": obj.get(name_field),
+                    "Event Type": event_type,
+                    "Timetable Slot ID": slot["id"],
+                    "Day Of Week": slot.get("dayOfWeek"),
+                    "Day Of Cycle": slot.get("dayOfCycle"),
+                    "Term Time Only": slot.get("termTimeOnly"),
+                    "Start Time": slot.get("startTime"),
+                    "End Time": slot.get("endTime"),
+                    "Slot Effective Date": slot.get("effectiveDate"),
+                    "Slot End Date": slot.get("endDate"),
+                    "Effective Date": None,
+                    "New Start Time": None,
+                    "New End Time": None,
+                })
 
     pl.DataFrame(rows, schema={column: pl.Utf8 for column in EXPORT_COLUMNS}, strict=False).write_csv(csv_path)
     print(f"Exported {len(rows)} timetable slots to {csv_path}")
 
 
-def retime_slot(arbor, slot_id, effective_date, start_time, end_time, dry_run):
+def retime_slot(arbor, slot_id, effective_date, start_time, end_time, dry_run, allow_all_object_types=False):
     """End a slot the day before effective_date and recreate it with new times from effective_date.
     Returns a (status, new slot href) tuple."""
     if effective_date <= date.today():
         raise ValueError(f"Effective date {effective_date} must be in the future")
 
     slot = arbor.get_timetable_slot(slot_id)
+    object_type = slot["timetabledObject"]["entityType"]
+    blocked = object_type != "RepeatingSchoolEvent" and not allow_all_object_types
+    if blocked and not dry_run:
+        raise ValueError(f"Slot belongs to {object_type}, not a repeating school event; pass --allow-all-object-types to change it")
+    blocked_note = " (needs --allow-all-object-types)" if blocked else ""
+
     slot_start = to_date(slot.get("effectiveDate"))
     original_end_date = slot.get("endDate")
     slot_end = to_date(original_end_date)
@@ -120,17 +150,22 @@ def retime_slot(arbor, slot_id, effective_date, start_time, end_time, dry_run):
 
     # Slot hasn't started yet, so there's nothing to end: change its times in place
     if slot_start is not None and slot_start >= effective_date:
-        if not dry_run:
-            arbor.update_timetable_slot(slot_id, startTime=start_time, endTime=end_time)
+        if dry_run:
+            return f"Dry run: would change times on future slot (starts {slot_start}){blocked_note}", None
+        arbor.update_timetable_slot(slot_id, startTime=start_time, endTime=end_time)
         return f"Updated times on future slot (starts {slot_start})", slot["href"]
 
-    # Read locations and staff before ending the slot, keeping those still in place on the effective date
+    # Read locations, staff and student exceptions before ending the slot,
+    # keeping those still in place on the effective date
     locations = [r for r in arbor.list_timetable_slot_locations(slot["href"]) if is_active_on(r, effective_date)]
     staff = [r for r in arbor.list_timetable_slot_staff(slot["href"]) if is_active_on(r, effective_date)]
+    student_exceptions = [r for r in arbor.list_timetable_slot_student_exceptions(slot["href"])
+                          if is_active_on(r, effective_date)]
 
     if dry_run:
         return (f"Dry run: would end on {previous_day} and create {start_time}-{end_time} from {effective_date} "
-                f"with {len(locations)} location(s) and {len(staff)} staff"), None
+                f"with {len(locations)} location(s), {len(staff)} staff and "
+                f"{len(student_exceptions)} student exception(s){blocked_note}"), None
 
     # End the old slot first so the new slot's room booking doesn't clash with the old one
     arbor.end_timetable_slot(slot_id, previous_day.isoformat())
@@ -158,13 +193,16 @@ def retime_slot(arbor, slot_id, effective_date, start_time, end_time, dry_run):
         for record in staff:
             arbor.create_timetable_slot_staff(new_slot_href, record["staff"], effective_date.isoformat(),
                                               record.get("endDate"))
+        for record in student_exceptions:
+            arbor.create_timetable_slot_student_exception(new_slot_href, record["student"],
+                                                          effective_date.isoformat(), record.get("endDate"))
     except Exception as e:
-        raise RuntimeError(f"New slot {new_slot_href} created but copying location/staff failed: {e}") from e
+        raise RuntimeError(f"New slot {new_slot_href} created but copying location/staff/students failed: {e}") from e
 
     return "Success", new_slot_href
 
 
-def apply_slots(arbor, csv_path, results_path, dry_run):
+def apply_slots(arbor, csv_path, results_path, dry_run, allow_all_object_types=False):
     df = pl.read_csv(csv_path, infer_schema_length=0)
     results = []
     for row in df.iter_rows(named=True):
@@ -178,6 +216,7 @@ def apply_slots(arbor, csv_path, results_path, dry_run):
                 start_time=to_time(row["New Start Time"]),
                 end_time=to_time(row["New End Time"]),
                 dry_run=dry_run,
+                allow_all_object_types=allow_all_object_types,
             )
             results.append({**row, "Status": status, "New Slot Href": new_slot_href})
         except Exception as e:
@@ -195,16 +234,21 @@ if __name__ == "__main__":
 
     export_parser = subparsers.add_parser("export", help="Export current timetable slots to a CSV")
     export_parser.add_argument("--csv", default="timetable_slots.csv")
+    export_parser.add_argument("--object-type", choices=[*OBJECT_TYPES, "all"], default="RepeatingSchoolEvent",
+                               help="Which slots to export: repeating events (default), classes, clubs or all")
     export_parser.add_argument("--event-type", help="Only export repeating events of this type code, e.g. MEETING")
 
     apply_parser = subparsers.add_parser("apply", help="End slots and create new ones from the filled-in CSV")
     apply_parser.add_argument("--csv", default="timetable_slots.csv")
     apply_parser.add_argument("--results", default="timetable_slots_results.csv")
     apply_parser.add_argument("--dry-run", action="store_true", help="Show what would change without writing to Arbor")
+    apply_parser.add_argument("--allow-all-object-types", action="store_true",
+                              help="Also change slots for classes and clubs, not just repeating school events")
 
     args = parser.parse_args()
     arbor = connect()
     if args.command == "export":
-        export_slots(arbor, args.csv, args.event_type)
+        object_types = list(OBJECT_TYPES) if args.object_type == "all" else [args.object_type]
+        export_slots(arbor, args.csv, object_types, args.event_type)
     else:
-        apply_slots(arbor, args.csv, args.results, args.dry_run)
+        apply_slots(arbor, args.csv, args.results, args.dry_run, args.allow_all_object_types)

@@ -35,19 +35,27 @@ The main.py demonstrates how to use the class by looping through a CSV containin
 - create_timetable_slot(timetabled_object, start_time, end_time, effective_date, ...): Create a timetable slot.
 - list_timetable_slot_locations / create_timetable_slot_location: Rooms attached to a timetable slot.
 - list_timetable_slot_staff / create_timetable_slot_staff: Staff attached to a timetable slot.
+- list_timetable_slot_student_exceptions / create_timetable_slot_student_exception: Students excluded from a timetable slot.
+- list_academic_units() / list_clubs(): Classes and clubs, which are also scheduled by timetable slots.
 
-## Changing times of repeating events from a date
-Repeating school events are scheduled by timetable slots (one per day of the week or cycle day), each with an
-`effectiveDate`, `endDate`, `startTime` and `endTime`. `retime_slots.py` ends each slot the day before an effective
-date and creates a new slot with the new times from that date, copying the slot's rooms and staff across. Slots
-that haven't started yet have their times changed in place.
+## Changing times of timetable slots from a date
+Repeating school events, classes (academic units) and clubs are scheduled by timetable slots (one per day of the
+week or cycle day), each with an `effectiveDate`, `endDate`, `startTime` and `endTime`. `retime_slots.py` ends each
+slot the day before an effective date and creates a new slot with the new times from that date, copying the slot's
+rooms, staff and student exceptions across. Slots that haven't started yet have their times changed in place.
 
 ```sh
-python retime_slots.py export --event-type MEETING   # writes timetable_slots.csv
+python retime_slots.py export                          # repeating school events, all event types
+python retime_slots.py export --event-type MEETING     # only one event type
+python retime_slots.py export --object-type AcademicUnit   # classes; also Club or all
 # fill in Effective Date, New Start Time, New End Time for the slots to move (blank rows are ignored)
-python retime_slots.py apply --dry-run               # check timetable_slots_results.csv
+python retime_slots.py apply --dry-run                 # check timetable_slots_results.csv
 python retime_slots.py apply
 ```
+
+`apply` only changes repeating school event slots unless `--allow-all-object-types` is passed. Class slots drive
+lessons and attendance registers, and Arbor normally manages them through timetable imports, so check Arbor's
+timetable guidance in the developer portal before changing them this way.
 
 Endpoint and field names come from Arbor's public PHP SDK (https://github.com/arbor-education/sis-sdk-php,
 `src/Arbor/Model/TimetableSlot.php`). Test in the sandbox before running against a live school.
